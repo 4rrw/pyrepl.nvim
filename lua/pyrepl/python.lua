@@ -203,4 +203,84 @@ function M.get_tool_completions(arglead)
     end, vim.tbl_keys(tools))
 end
 
+---Check if required Python packages are importable.
+---@return boolean
+function M.check_dependencies()
+    local ok, python_path = pcall(M.get_python_path)
+    if not ok then
+        return false
+    end
+
+    local obj = vim.system(
+        { python_path, "-c", "import jupyter_console, pynvim" },
+        { text = true }
+    ):wait()
+
+    return obj.code == 0
+end
+
+---Check dependencies and, if missing, prompt the user to install them.
+---Calls callback only after dependencies are confirmed present.
+---@param callback fun()
+function M.ensure_dependencies(callback)
+    if M.check_dependencies() then
+        callback()
+        return
+    end
+
+    local ok, python_path = pcall(M.get_python_path)
+    if not ok then
+        vim.notify(python_path, vim.log.levels.ERROR)
+        return
+    end
+
+    vim.ui.select(vim.tbl_keys(tools), {
+        prompt = "Pyrepl: dependencies missing. Install with:",
+    }, function(tool)
+        if not tool then
+            return
+        end
+
+        local packages_string = table.concat(packages, " ")
+        local cmd_str = tools[tool]:format(python_path) .. " " .. packages_string
+
+        local buf = vim.api.nvim_create_buf(false, true)
+        local width = math.floor(vim.o.columns * 0.8)
+        local height = math.floor(vim.o.lines * 0.4)
+        local win = vim.api.nvim_open_win(buf, true, {
+            relative = "editor",
+            width = width,
+            height = height,
+            row = math.floor((vim.o.lines - height) / 2),
+            col = math.floor((vim.o.columns - width) / 2),
+            style = "minimal",
+            border = "rounded",
+            title = " Installing Pyrepl dependencies ",
+            title_pos = "center",
+        })
+
+        vim.api.nvim_buf_call(buf, function()
+            vim.fn.jobstart({ "/bin/sh", "-c", cmd_str }, {
+                term = true,
+                pty = true,
+                on_exit = function(_, code)
+                    vim.schedule(function()
+                        if vim.api.nvim_win_is_valid(win) then
+                            vim.api.nvim_win_close(win, true)
+                        end
+                        if code == 0 then
+                            callback()
+                        else
+                            vim.notify(
+                                config.get_message_prefix() .. "installation failed",
+                                vim.log.levels.ERROR
+                            )
+                        end
+                    end)
+                end,
+            })
+        end)
+    end)
+end
+
 return M
