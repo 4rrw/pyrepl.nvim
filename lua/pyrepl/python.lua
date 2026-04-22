@@ -219,12 +219,22 @@ function M.check_dependencies()
     return obj.code == 0
 end
 
----Check dependencies and, if missing, prompt the user to install them.
+---Check dependencies and, if `auto_install` is set, install them silently.
 ---Calls callback only after dependencies are confirmed present.
 ---@param callback fun()
 function M.ensure_dependencies(callback)
     if M.check_dependencies() then
         callback()
+        return
+    end
+
+    local tool = config.get_state().auto_install
+    if not tool or not tools[tool] then
+        vim.notify(
+            config.get_message_prefix()
+                .. "dependencies missing, run `:PyreplInstall pip|uv` or set `auto_install`",
+            vim.log.levels.ERROR
+        )
         return
     end
 
@@ -234,53 +244,26 @@ function M.ensure_dependencies(callback)
         return
     end
 
-    vim.ui.select(vim.tbl_keys(tools), {
-        prompt = "Pyrepl: dependencies missing. Install with:",
-    }, function(tool)
-        if not tool then
-            return
-        end
+    local packages_string = table.concat(packages, " ")
+    local cmd_str = tools[tool]:format(python_path) .. " " .. packages_string
 
-        local packages_string = table.concat(packages, " ")
-        local cmd_str = tools[tool]:format(python_path) .. " " .. packages_string
+    vim.notify(config.get_message_prefix() .. "installing dependencies...")
 
-        local buf = vim.api.nvim_create_buf(false, true)
-        local width = math.floor(vim.o.columns * 0.8)
-        local height = math.floor(vim.o.lines * 0.4)
-        local win = vim.api.nvim_open_win(buf, true, {
-            relative = "editor",
-            width = width,
-            height = height,
-            row = math.floor((vim.o.lines - height) / 2),
-            col = math.floor((vim.o.columns - width) / 2),
-            style = "minimal",
-            border = "rounded",
-            title = " Installing Pyrepl dependencies ",
-            title_pos = "center",
-        })
-
-        vim.api.nvim_buf_call(buf, function()
-            vim.fn.jobstart({ "/bin/sh", "-c", cmd_str }, {
-                term = true,
-                pty = true,
-                on_exit = function(_, code)
-                    vim.schedule(function()
-                        if vim.api.nvim_win_is_valid(win) then
-                            vim.api.nvim_win_close(win, true)
-                        end
-                        if code == 0 then
-                            callback()
-                        else
-                            vim.notify(
-                                config.get_message_prefix() .. "installation failed",
-                                vim.log.levels.ERROR
-                            )
-                        end
-                    end)
-                end,
-            })
+    vim.system(
+        { "/bin/sh", "-c", cmd_str },
+        { text = true },
+        vim.schedule_wrap(function(obj)
+            if obj.code == 0 then
+                vim.notify(config.get_message_prefix() .. "dependencies installed")
+                callback()
+            else
+                vim.notify(
+                    config.get_message_prefix() .. "installation failed\n" .. (obj.stderr or ""),
+                    vim.log.levels.ERROR
+                )
+            end
         end)
-    end)
+    )
 end
 
 return M
