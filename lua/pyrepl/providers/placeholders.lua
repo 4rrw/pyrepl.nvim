@@ -126,10 +126,27 @@ local function send_apc(body)
 end
 
 ---Upload base64 PNG data to the terminal image store.
+---Split into <=4096 byte chunks as required by the kitty graphics protocol.
 ---@param img_id integer
 ---@param img_data string
 local function upload_image(img_id, img_data)
-    send_apc(("f=100,t=d,i=%d,q=2;%s"):format(img_id, img_data))
+    local chunk_size = 4096
+    local total = #img_data
+    local pos = 1
+    local first = true
+
+    while pos <= total do
+        local chunk = img_data:sub(pos, pos + chunk_size - 1)
+        pos = pos + chunk_size
+        local more = pos <= total and 1 or 0
+
+        if first then
+            send_apc(("f=100,t=d,i=%d,q=2,m=%d;%s"):format(img_id, more, chunk))
+            first = false
+        else
+            send_apc(("m=%d;%s"):format(more, chunk))
+        end
+    end
 end
 
 ---@param img_id integer
